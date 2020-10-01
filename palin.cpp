@@ -5,6 +5,7 @@ Prof: Bhatia
 Date: 09/30/20
 */
 
+//======================================================================================Includes=============================================================================
 #include <iostream>
 #include <unistd.h>
 #include <ctime>
@@ -12,13 +13,14 @@ Date: 09/30/20
 #include <sys/shm.h>
 #include <signal.h>
 #include <sys/stat.h>
-#include <fstream> //for writing to file
+#include <fstream> 
 #include <cstdlib>
 #include <string.h>
 #include <stdbool.h>
-
+//=========================================================================================================================================================================
 using namespace std;
-//ADDED STRUCT IDK WHY THOUGH
+
+//Struct to share data and shared memory between files
 struct shared_memory {
 	int count;
 	int turn;
@@ -27,21 +29,25 @@ struct shared_memory {
 	int slaveProcessGroup;
 };
 
-
+//Set state for critical section, se we can see a status for who wants in ect.
 enum state { idle, want_in, in_cs };
 
 
+//Make sure we have a handler incase of cntrl +c
 void sigHandler(int);
-char* getFormattedTime(); //gets local time
 
+//Function to get local time. Nothing more, nothing less
+char* getFormattedTime(); 
 
-int id; //process id, used by multiple functions
+//process id, used by multiple functions, keeps track of processes
+int id; 
 
 int main(int argc, char ** argv){
+	//Same as flush but does it for everything
 	setvbuf(stdout, NULL, _IONBF, 0);
-	
+	//Singal for cntrl and termination
 	signal(SIGTERM, sigHandler);
-	
+	//Initialize index
 	int index;
 
 	if(argc < 2){ //If no arguments were supplied, id must not be set
@@ -50,28 +56,35 @@ int main(int argc, char ** argv){
 	}
 	else{
 		id = atoi(argv[1]);
-		index = id - 1;//atoi(argv[2]);
+		index = id - 1;
 	}
 	
 	srand(time(0) + id); //generate different delays each run
 
 	int N; //number of slave processes master will spawn
 
+	//Generate the key, will be same as master
 	int shmKey = ftok("makefile", 'p');
+	//Generate segment ID
 	int shmSegmentID;
+	//Grab shared mem
 	shared_memory* shm;
+	//Try and allocate and attach shared memory, fail and exit if you cannot
 	if ((shmSegmentID = shmget(shmKey, sizeof(struct shared_memory), IPC_CREAT | S_IRUSR | S_IWUSR)) < 0) {
 		perror("shmget: Failed to allocate shared memory");
 		exit(1);
 	} else {
 		shm = (struct shared_memory*) shmat(shmSegmentID, NULL, 0);
 	}
-	
+	//Number of slaves master will spawn
 	N = shm->count;
 	
 	printf("%s: Process %d Entering critical section\n", getFormattedTime(), id);
 	//sleep for random amount of time (between 0 and 2 seconds);
-//	cerr << getFormattedTime() << ": Process " << id << " wants to enter critical section\n";
+	
+//Below was used for testing
+//	cerr << getFormattedTime() << ": Process " << id << " wants to enter critical section\n"; 
+
 //TELLS IF ITS A PALINDROME OR NOT
 //========================================================================================
 	int l = 0;
@@ -87,9 +100,6 @@ int main(int argc, char ** argv){
 		l++;
 		r--;
 	}
-	
-//	printf("id: %d, string: %s, palindrome: %s\n", id, shm->data[id - 1], palin ? "true" : "false");
-	
 //========================================================================================
 	
 	int j;
@@ -114,16 +124,17 @@ int main(int argc, char ** argv){
 	} while( (j < N) || ((shm->turn != id-1) && (shm->flags[shm->turn] != idle)) );
 	shm->turn = id-1;
 
-	/* Critical section */
+/*============================================================!!!!!!!!!!!!!!!!Critical section!!!!!!!!!!!!!!!!!!!!!!!============================================================ */
 
+//Below is used for debugging
 //	cerr << getFormattedTime() << ": Process " << id << " in critical section\n";
 	
 	printf("%s: Process %d in critical section\n", getFormattedTime(), id);
+
 	//sleep for random amount of time (between 0 and 2 seconds);
 	sleep(rand() % 3);
 
-//WRITES TO PALIN.OUT AND NONPALIN.OUT
-//======================================================================================
+//WRITES TO PALIN.OUT AND NONPALIN.OUT AND LOGFILE
 	FILE *file = fopen(palin ? "palin.out" : "nopalin.out", "a+");
 	if (file == NULL) {
 		perror("");
@@ -132,6 +143,7 @@ int main(int argc, char ** argv){
 	fprintf(file, "%s\n", shm->data[id - 1]);
 	fclose(file);
 	
+	//Write to log file, all processes, time and ids
 	file = fopen("output.log", "a+");
 	if (file == NULL) {
 		perror("");
@@ -140,7 +152,7 @@ int main(int argc, char ** argv){
 	fprintf(file, "%s %d %d %s\n", getFormattedTime(), getpid(), id - 1, shm->data[id - 1]);
 	fclose(file);
 	
-	//exit from critical section;
+/*=======================================================================================exit from critical section;=================================================== */
 
 //	cerr << getFormattedTime() << ": Process " << id << " exiting critical section\n";
 
@@ -159,14 +171,16 @@ int main(int argc, char ** argv){
 	return 0;
 }
 
+//Waits for a signal. Kept print f for debugging
 void sigHandler(int signal) {
 	if (signal == SIGTERM) {
-		printf("In Signal Handler FUnction\n");
+		printf("In Signal Handler Function\n");
 		exit(1);
 	}
 }
 
 
+//Again gets time, nothing more, nothing less
 char* getFormattedTime(){
 	int timeStringLength;
 	string timeFormat;

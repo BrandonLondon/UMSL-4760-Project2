@@ -4,6 +4,8 @@
  * Prof: Bhatia
  * Course: 4760
  */
+
+//Includes for functions
 #include <sys/time.h>
 #include <unistd.h>
 #include <fstream> 
@@ -17,8 +19,10 @@
 #include <string>
 #include <cstring>
 
+//So I dont have to use annoying std everywhere
 using namespace std;
 
+//Shared memory struct that will be used to pass data between files
 struct shared_memory {
 	int count;
 	int turn;
@@ -33,17 +37,19 @@ void sigHandler(int SIG_CODE); //Signal handler for master to handle Ctrl+C inte
 void timerSignalHandler(int); //Signal handler for master to handle time out
 void releaseMemory(); //Releases all shared memory allocated
 
+//Parent Interrupt function for timer
 void parentInterrupt(int seconds);
+//Timers decrement from it_value to zero, generate a signal, and reset to it_interval.
 void timer(int seconds);
 
-const int MAX_NUM_OF_PROCESSES_IN_SYSTEM = 20;
-int currentConcurrentProcessesInSystem = 0;
-int maxTotalProcessesInSystem = 4;
-int maxConcurrentProcessesInSystem = 2;
-int durationBeforeTermination; // How long should master run? set in main
-int shmKey = ftok("makefile", 'p');
-int shmSegmentID;
-struct shared_memory* shm;
+const int MAX_NUM_OF_PROCESSES_IN_SYSTEM = 20; // Hardcap for number of processes ever allowed in system. This will never change 
+int currentConcurrentProcessesInSystem = 0;// Holds/keeps track of current processes in system
+int maxTotalProcessesInSystem = 4; //Softcap set by user to hold max processes ever allowed in system (default 4)
+int maxConcurrentProcessesInSystem = 2; // Cap set by user to hold the max number of processes ever in the system at any given time (default 2)
+int durationBeforeTermination = 100; // Cap set by user to control when master will terminate in seconds (default 100)
+int shmKey = ftok("makefile", 'p');//Key generation for shared Mem
+int shmSegmentID; //Segment id for shared memory
+struct shared_memory* shm; //gives shared memory its struct
 
 int status = 0; //used for wait status in spawnChild function
 
@@ -53,8 +59,9 @@ int startTime; //will hold time right before forking starts, used in main and ti
 int main(int argc, char** argv){
 	signal(SIGINT, sigHandler);
 	
+	//Try and create your shared memory and attached it. Should be after the getopt but it works so I aint touching it
 	if ((shmSegmentID = shmget(shmKey, sizeof(struct shared_memory), IPC_CREAT | S_IRUSR | S_IWUSR)) < 0) {
-		perror("TESTING");
+		perror("Failed to create");
 		exit(1);
 	} else {
 		shm = (struct shared_memory*) shmat(shmSegmentID, NULL, 0);
@@ -63,9 +70,9 @@ int main(int argc, char** argv){
 	int c;// for getopt
 	while((c = getopt(argc, argv, "hn:s:t:")) != -1) {
 		switch(c){
-			case 'h':
+			case 'h':// Help command
 				
-				cout<< "HOW TO RUN: " << endl;
+				cout<< "USAGE: " << endl;
 				cout<< "./master -h for help command" << endl;
 				cout<< "./master [-n x] [-s x] [-t time] infile" << endl;
 				cout<< "PARAMETERS: " << endl;
@@ -77,21 +84,21 @@ int main(int argc, char** argv){
 				exit(0);
 			break;
 			
-			case 'n'://Max Processes
+			case 'n'://Max Processes softcap
 				maxTotalProcessesInSystem = atoi(optarg);
 				if((maxTotalProcessesInSystem <= 0) || maxTotalProcessesInSystem > MAX_NUM_OF_PROCESSES_IN_SYSTEM){
 					perror("MaxProcesses: Cannot be Zero or greater than 20");
 					exit(1);
 				}
 			break;
-			case 's':
+			case 's':// max concurrent processes softcape
 				maxConcurrentProcessesInSystem = atoi(optarg);
 				if(maxConcurrentProcessesInSystem <= 0){
-					perror("spawnBurst: Cannot be negative or zero");
+					perror("maxConcurrentProcessesInSystem: Cannot be negative or zero");
 					exit(1);
 				}		
 			break;
-			case 't':
+			case 't':// master Termination softcap set by user 
 				durationBeforeTermination = atoi(optarg);
 				if(durationBeforeTermination <= 0) {
 					perror("durationBeforeTermination: Master cannot have a negative or zero duration");
@@ -101,15 +108,19 @@ int main(int argc, char** argv){
 			
 			default:
 				perror("NOT VALID PARAM: Use -h for Help");
+				cout<< "USAGE: " << endl;
+				cout<< "./master -h for help command" << endl;
+				cout<< "./master [-n x] [-s x] [-t time] infile" << endl;
 				exit(1);
 			break;
 						
 				
 		}
 	}
-	
+	//Start timer for Termination
 	parentInterrupt(durationBeforeTermination);
-//============================================================================================================
+
+	//Try and open the file given, If its not found then exit
 	int i = 0;
 	FILE *fp = fopen(argv[optind], "r");
 	if(fp == 0)
@@ -117,41 +128,37 @@ int main(int argc, char** argv){
 		perror("fopen: File not found");
 		exit(1);
 	}
+	// allocate a string to hold each line and put it into shared memory to be passed into palin
 	char line[256];
 	while(fgets(line, sizeof(line), fp) != NULL) {
 		line[strlen(line) - 1] = '\0';
-		//HOW do i attached shared memory segment
 		strcpy(shm->data[i], line);
 		i++;
 	}
 	
-	// Set count to number of lines in intput file
-	//shm->count = i;
-	
+	//Initailize the count, this will keep track of how many processes there has ever been
 	int count = 0;
-	
+	//check to see if the max processes is greater than lines if so, change the softcap and set it equal to number of lines
 	if(i < maxTotalProcessesInSystem){
 		maxTotalProcessesInSystem = i;
 	}
-	
+	//check and make sure it doesnt go over hardcap
 	if (maxTotalProcessesInSystem < maxConcurrentProcessesInSystem) {
 		maxConcurrentProcessesInSystem = maxTotalProcessesInSystem;
 	}
 	
+	//pass in max total processes to sharedMemory
 	shm->count = maxTotalProcessesInSystem;
 	
+	// check and see if maxprocesses has been reached if so, your done, if not, try and spawn a child
 	while(count < maxConcurrentProcessesInSystem){
-//		printf("count: %d concurrentProcesses: %d \n", count, currentConcurrentProcessesInSystem);
 	 	trySpawnChild(count++);
 	 }
 
 	 //wait for all child processes to finish or time to run out, then free up memory and close
-
 	while(currentConcurrentProcessesInSystem > 0){
 	 	wait(NULL);
 	 	--currentConcurrentProcessesInSystem;
-//	 	cout << currentConcurrentProcessesInSystem << " processes in system.\n";
-//		printf("\ncount %d\n", count);
 		trySpawnChild(count++);
 	}
 	
@@ -160,16 +167,17 @@ int main(int argc, char** argv){
 	return 0;
 }
 
-void trySpawnChild(int count){
+//spawns child if less than 20 processes are in the system
+void trySpawnChild(int count){ 
 	if((currentConcurrentProcessesInSystem < maxConcurrentProcessesInSystem) && (count < maxTotalProcessesInSystem)){
 			spawn(count);
 	}
 }
 
+//Spawns children, assigns them a group ID, and then have them go into palin
 void spawn(int count){
 	++currentConcurrentProcessesInSystem;
 	if(fork() == 0){
-//		cout << currentConcurrentProcessesInSystem << " processes in system.\n";
 	 	if(count == 1) shm->slaveProcessGroup = getpid();
 	 	setpgid(0, shm->slaveProcessGroup);
 		char buf[256];
@@ -179,9 +187,12 @@ void spawn(int count){
 	 }
 }
 
+//This is my signal handler to kill all processes when cntrl +c is called. It just kills anything with the slave process ID which is always given atspawn
 void sigHandler(int signal){
 	killpg(shm->slaveProcessGroup, SIGTERM);
 	int status;
+
+	//THIS IS NOT NECCASSARY BUT I LIKE TO BE NOTIFIED IF A PROCESSES ISNT KILLED CORRECTLY
 	while (wait(&status) > 0) {
 		if (WIFEXITED(status)) printf("OK: Child exited with exit status: %d\n", WEXITSTATUS(status));
 		else printf("ERROR: Child has not terminated correctly\n");
@@ -191,11 +202,13 @@ void sigHandler(int signal){
 	exit(0);
 }
 
+//Function that just realeases all shared memory
 void releaseMemory() {
 	shmdt(shm);
 	shmctl(shmSegmentID, IPC_RMID, NULL);
 }
 
+//Used to count down and when it hits zero, send a signal
 void parentInterrupt(int seconds)
 {
 	timer(seconds);
