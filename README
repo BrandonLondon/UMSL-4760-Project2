@@ -1,3 +1,5 @@
+Devence: Bhatai states that we did not have to implement a shared clock. We would use time or formated time for everything.
+
 # DESCRIPTION:
 The goal of this homework is to become familiar with using shared memory and creating multiple processes. We will be using getopt and perror as well as fork().
 
